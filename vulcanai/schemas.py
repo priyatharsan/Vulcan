@@ -63,7 +63,7 @@ conv_network = {
                 "mode": {
                     "id": "/properties/pool/properties/mode",
                     "type": "string",
-                    "enum": ["max", "average_inc_pad", "average_exc_pad"]
+                    "enum": ["MAX", "AVG"]
                 },
                 "stride": {
                     "id": "/properties/pool/properties/stride",
