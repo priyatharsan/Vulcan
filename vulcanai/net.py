@@ -70,8 +70,8 @@ class Network(object):
             if self.input_network.get('network', False) is not False and \
                self.input_network.get('layer', False) is not False and \
                self.input_network.get('get_params', None) is not None:
-                self.input_var = None   # NOTE: Write a Tensorflow replacement code
-                self.input_dim = None   # NOTE: Write a Tensorflow replacement code
+                self.input_var = self.input_network['network'].layers[0]
+                self.input_dim = self.input_network['network'].layers[self.input_network['layer']].shape
 
             else:
                 raise ValueError(
@@ -125,7 +125,6 @@ class Network(object):
 
         if self.num_classes is not None and self.num_classes != 0:
             with tf.variable_scope('Input_layer'):
-                print('\tClassification Layer:')
                 network = self.create_classification_layer(
                     network,
                     num_classes=self.num_classes,
@@ -164,7 +163,7 @@ class Network(object):
             raise ValueError('{} pooling does not exist. '
                              'Please use one of: {}'.format(pool_mode, tf_pools))
 
-        print("Creating {} Network...".format(self.name))
+        print("\nCreating {} Network...".format(self.name))
 
         if self.input_network is None:
             with tf.variable_scope('Input_layer'):
@@ -348,7 +347,7 @@ class Network(object):
                 "Cannot build network: units and dropouts don't correspond"
             )
 
-        print("Creating {} Network...".format(self.name))
+        print("\nCreating {} Network...".format(self.name))
         if self.input_network is None:
             with tf.variable_scope('Input_layer'):
                 print('\tInput Layer:')
@@ -363,7 +362,6 @@ class Network(object):
             with tf.variable_scope('prev_layer'):
                 network = self.input_network['network']. \
                     layers[self.input_network['layer']]
-
                 print('Appending layer {} from {} to {}'.format(
                     self.input_network['layer'],
                     self.input_network['network'].name,
@@ -423,7 +421,7 @@ class Network(object):
 
         Returns: the classification layer appended to all previous layers
         """
-        print('\tOutput Layer:')
+        print('\tOutput/Classification Layer:')
         network = tf.layers.dense(
                             inputs=network,
                             units=num_classes,
@@ -459,7 +457,7 @@ class Network(object):
         tf.summary.scalar('loss', self.cost)
         # calculate updates using ADAM optimization gradient descent
         learning_rate = self.learning_rate
-        print "optimizer: ",  optimizers[self.optimizer]
+
         if self.optimizer == 'adam':
             optimizer = optimizers[self.optimizer](
                             learning_rate=learning_rate,
@@ -518,7 +516,7 @@ class Network(object):
     def cross_entropy_loss(self, prediction, y):
         """Generate a cross entropy loss function."""
         print("Using categorical cross entropy loss")
-        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
+        return tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(
                     logits=prediction,
                     labels=y
                     ))
