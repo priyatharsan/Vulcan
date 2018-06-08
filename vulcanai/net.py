@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 
 import tensorflow as tf
@@ -87,14 +89,97 @@ class Network(object):
             nonlinearity=activations[self.activation])
 
         if self.y is not None:
-            self.trainer = self.create_trainer()
-            self.validator = self.create_validator()
+            if self.cost is None:
+                self.cost = self.loss_fn(self.network, self.y)
+            self.trainer = self.create_training_step(self.cost, self.learning_rate)
+            self.eval_correct = self.evaluation(self.network, self.y)
+
+        # Build the summary Tensor based on the TF collection of Summaries.
+        summary = tf.summary.merge_all()
         try:
             self.timestamp
         except AttributeError:
             self.timestamp = get_timestamp()
         self.minibatch_iteration = 0
 
+    def loss_fn(self, logits, labels_placeholder):
+
+        print("Calculating Loss")
+
+        if self.num_classes is None or self.num_classes == 0:
+            loss = self.mse_loss(logits, labels_placeholder)
+        else:
+            loss = self.cross_entropy_loss(logits, labels_placeholder)
+
+        return loss
+
+    def create_training_step(self, loss, learning_rate):
+        """
+        Creates an optimizer and applies the gradients to all trainable variables.
+        The train_step returned by this function is passed to the
+        `sess.run()` call to cause the model to train.
+
+        Creates a summarizer to track the loss over time in TensorBoard.
+
+        Returns:
+            train_step: The Op for training.
+        """
+        print("Creating {} Trainer...".format(self.name))
+        # Add a scalar summary for the snapshot loss.
+        tf.summary.scalar('loss', self.cost)
+        # calculate updates using ADAM optimization gradient descent
+        if self.optimizer == 'adam':
+            optimizer = optimizers[self.optimizer](
+                            learning_rate=learning_rate,
+                            beta1=0.9,
+                            beta2=0.999,
+                            epsilon=1e-08
+            )
+        elif self.optimizer == 'sgd':
+            optimizer = optimizers[self.optimizer](
+                            learning_rate=learning_rate
+            )
+        else:
+            updates = None
+            ValueError("No optimizer found")
+
+        with tf.name_scope("train"):
+            # Variable to track the global step.
+            global_step = tf.Variable(0, name='global_step', trainable=False)
+            train_step = optimizer.minimize(self.cost, global_step=global_step)
+
+        return train_step
+
+    def evaluation(self, logits, labels_placeholder):
+        """
+        Records the accuracy of the network.
+
+        Returns: A scalar float32 tensor with the number of examples
+                 that were predicted correctly.
+        """
+        print("Creating {} Validator...".format(self.name))
+
+        with tf.name_scope("accuracy"):
+            # check how much error in prediction
+            if self.val_cost is None:
+                if self.num_classes is None or self.num_classes == 0:
+                    self.val_cost = self.mse_loss(logits, labels_placeholder)
+                    val_acc = tf.constant(0)
+                else:
+                    self.val_cost = self.cross_entropy_loss(logits, labels_placeholder)
+                    # check the accuracy of the prediction
+                    if self.num_classes > 1:
+                        val_acc = tf.reduce_mean(tf.cast(tf.equal(
+                                              tf.argmax(logits, axis=1),
+                                              tf.argmax(labels_placeholder, axis=1)),
+                                              tf.float32))
+                    elif self.num_classes == 1:
+                        val_acc = tf.reduce_mean(tf.cast(tf.equal(
+                                              tf.round(logits), labels_placeholder),
+                                              tf.float32))
+            tf.summary.scalar("accuracy", val_acc)
+
+        return val_acc
 
     def create_network(self, config, nonlinearity):
 
@@ -124,12 +209,11 @@ class Network(object):
             raise ValueError('Mode {} not supported.'.format(mode))
 
         if self.num_classes is not None and self.num_classes != 0:
-            with tf.variable_scope('Input_layer'):
-                network = self.create_classification_layer(
-                    network,
-                    num_classes=self.num_classes,
-                    nonlinearity=activations[self.pred_activation]
-                )
+            network = self.create_classification_layer(
+                network,
+                num_classes=self.num_classes,
+                nonlinearity=activations[self.pred_activation]
+            )
 
         return network
 
@@ -213,8 +297,7 @@ class Network(object):
                                                     filter_size,
                                                     stride,
                                                     pool_stride)):
-            layer_name = "conv{}D_layer{}".format(
-                conv_dim, i)
+            layer_name = "conv{}D_layer{}".format(conv_dim, i)
             with tf.variable_scope(layer_name):
                 network = conv_layer(
                     inputs=network,
@@ -222,113 +305,18 @@ class Network(object):
                     kernel_size=f_size,
                     strides=s,
                     padding='same',
-                    activation=nonlinearity,
-                    name="{}_conv{}D_{}".format(
-                        self.name, conv_dim, i)
-                )
+                    activation=nonlinearity
+                    )
                 self.layers.append(network)
                 print('\t\t{} {}'.format(network.shape, network.name))
                 network = pool(
                     inputs=network,
                     pool_size=p_s,
                     strides=p_s,
-                    padding='same',
-                    name="{}_{}pool".format(
-                        self.name, pool_mode)
-                )
+                    padding='same'
+                    )
             self.layers.append(network)
             print('\t\t{} {}'.format(network.shape, network.name))
-        return network
-
-    def create_dense_network_tf(self, units, dropouts, nonlinearity):
-        """
-        Generate a fully connected network of dense layers.
-
-        Args:
-            units: The list of number of nodes to have at each layer
-            dropouts: The list of dropout probabilities for each layer
-            nonlinearity: Nonlinearity from Tensorflow.nn
-
-        Returns: the output of the network (linked up to all the layers)
-        """
-        if len(units) != len(dropouts):
-            raise ValueError(
-                "Cannot build network: units and dropouts don't correspond"
-            )
-
-        print("Creating {} Network...".format(self.name))
-        if self.input_network is None:
-            with tf.variable_scope('Input_layer'):
-                print('\tInput Layer:')
-                network = tf.keras.layers.InputLayer(
-                                    input_shape=self.input_dim,
-                                    input_tensor=self.input_var,
-                                    name="{}_input"
-                                    .format(self.name)).output
-                print('\t\t{} {}'.format(network.shape, network.name))
-                self.layers.append(network)
-        else:
-            with tf.variable_scope('prev_layer'):
-                network = self.input_network['network']. \
-                    layers[self.input_network['layer']]
-
-                print('Appending layer {} from {} to {}'.format(
-                    self.input_network['layer'],
-                    self.input_network['network'].name,
-                    self.name))
-
-        if nonlinearity.__name__ == 'selu':
-            with tf.variable_scope('batch_norm'):
-                network = tf.layers.batch_normalization(
-                            network,
-                            training=(mode == tf.estimator.ModeKeys.TRAIN),
-                            name="{}_batchnorm".format(self.name))
-
-        print('\tHidden Layers:')
-        for i, (num_units, prob_dropout) in enumerate(zip(units, dropouts)):
-            layer_name = 'dense_layer%s' % i
-            with tf.variable_scope(layer_name):
-                if nonlinearity.__name__ == 'selu':
-                    with tf.variable_scope('weights'):
-                        w = tf.random_normal(
-                                shape=[network.shape[1], num_units],
-                                stddev=np.sqrt(1.0 / num_units),
-                                name='w_selu')
-                        tf.summary.histogram(layer_name + '/weights', w)
-                    with tf.variable_scope('biases'):
-                        b = tf.random_normal(
-                                shape=[1, num_units],
-                                stddev=0.0,
-                                name='b_selu')
-                        tf.summary.histogram(layer_name + '/biases', b)
-
-                else:
-                    with tf.variable_scope('weights'):
-                        w = tf.get_variable(
-                                shape=[network.shape[1], num_units],
-                                initializer=tf.glorot_uniform_initializer(),
-                                name='w')
-                        tf.summary.histogram(layer_name + '/weights', w)
-                    with tf.variable_scope('biases'):
-                        b = tf.get_variable(
-                                shape=[1, num_units],
-                                initializer=tf.glorot_uniform_initializer(),
-                                name='b')
-                        tf.summary.histogram(layer_name + '/biases', b)
-
-                new_layer = nonlinearity(tf.add(tf.matmul(network, w), b))
-
-                if nonlinearity.__name__ == 'selu':
-                    network = tf.contrib.nn.alpha_dropout(new_layer,
-                                                    prob_dropout)
-                else:
-                    network = tf.nn.dropout(new_layer,
-                                                    prob_dropout)
-
-                tf.summary.histogram(layer_name + '/outputs', network)
-
-            self.layers.append(network)
-            print('\t\t{} {}'.format(network.shape,network.name))
         return network
 
     def build_dense_network_tf(self, units, dropouts, nonlinearity):
@@ -373,9 +361,12 @@ class Network(object):
                         training=(mode == tf.estimator.ModeKeys.TRAIN),
                         name="{}_batchnorm".format(self.name))
 
+        if len(network.shape) > 2 and self.config.get('mode') == 'dense':
+            network = tf.layers.flatten(network)
+
         print('\tHidden Layers:')
         for i, (num_units, prob_dropout) in enumerate(zip(units, dropouts)):
-            layer_name = 'dense_layer1%s' % i
+            layer_name = 'dense_layer%s' % i
             with tf.variable_scope(layer_name):
                 if nonlinearity.__name__ == 'selu':
                     new_layer = tf.layers.dense(
@@ -397,13 +388,11 @@ class Network(object):
                                         inputs=network,
                                         units=num_units,
                                         activation=nonlinearity,
-                                        name="dense_layer")  # By default TF assumes Glorot uniform initializer for weights and zero initializer for bias
+                                        )  # By default TF assumes Glorot uniform initializer for weights and zero initializer for bias
 
                     network = tf.nn.dropout(new_layer,
                                                     prob_dropout)
                     tf.summary.histogram(layer_name+'/'+self.activation, network)
-#                network = tf.Print(network, [tf.argmax(network, 1)],
-#                   'argmax(out) = ', summarize=10, first_n=7)
             self.layers.append(network)
             print('\t\t{} {}'.format(network.shape, network.name))
 
@@ -422,96 +411,16 @@ class Network(object):
         Returns: the classification layer appended to all previous layers
         """
         print('\tOutput/Classification Layer:')
-        network = tf.layers.dense(
-                            inputs=network,
-                            units=num_classes,
-                            activation=tf.nn.softmax,
-                            name="last_layer")
+        with tf.variable_scope("classification_layer"):
+            network = tf.layers.dense(
+                                inputs=network,
+                                units=num_classes,
+                                activation=tf.nn.softmax
+                                )
 
-        print('\t\t{}'.format(network.shape))
+        print('\t\t{} {}'.format(network.shape, network.name))
         self.layers.append(network)
         return network
-
-    def create_trainer(self):
-        """
-        Creates a summarizer to track the loss over time in TensorBoard.
-
-        Creates an optimizer and applies the gradients to all trainable variables.
-        The train_step returned by this function is  passed to the
-        `sess.run()` call to cause the model to train.
-
-        Returns:
-            train_step: The Op for training.
-        """
-        print("Creating {} Trainer...".format(self.name))
-        # get network output
-        logits = self.network
-
-        # calculate a loss function which has to be a scalar
-        if self.cost is None:
-            if self.num_classes is None or self.num_classes == 0:
-                self.cost = self.mse_loss(logits, self.y)
-            else:
-                self.cost = self.cross_entropy_loss(logits, self.y)
-        # Add a scalar summary for the snapshot loss.
-        tf.summary.scalar('loss', self.cost)
-        # calculate updates using ADAM optimization gradient descent
-        learning_rate = self.learning_rate
-
-        if self.optimizer == 'adam':
-            optimizer = optimizers[self.optimizer](
-                            learning_rate=learning_rate,
-                            beta1=0.9,
-                            beta2=0.999,
-                            epsilon=1e-08
-            )
-        elif self.optimizer == 'sgd':
-            optimizer = optimizers[self.optimizer](
-                            learning_rate=learning_rate
-            )
-        else:
-            updates = None
-            ValueError("No optimizer found")
-
-        with tf.name_scope("train"):
-            # Variable to track the global step.
-            global_step = tf.Variable(0, name='global_step', trainable=False)
-            train_step = optimizer.minimize(self.cost, global_step=global_step)
-
-        return train_step
-
-    def create_validator(self):
-        """
-        Records the accuracy of the network.
-
-        Returns: A scalar float32 tensor with the number of examples
-                 that were predicted correctly.
-        """
-        print("Creating {} Validator...".format(self.name))
-        # create prediction
-        val_prediction = self.network
-
-        with tf.name_scope("accuracy"):
-            # check how much error in prediction
-            if self.val_cost is None:
-                if self.num_classes is None or self.num_classes == 0:
-                    self.val_cost = self.mse_loss(val_prediction, self.y)
-                    val_acc = tf.constant(0)
-                else:
-                    self.val_cost = self.cross_entropy_loss(val_prediction, self.y)
-                    # check the accuracy of the prediction
-                    if self.num_classes > 1:
-                        val_acc = tf.reduce_mean(tf.cast(tf.equal(
-                                              tf.argmax(val_prediction, axis=1),
-                                              tf.argmax(self.y, axis=1)),
-                                              tf.float32))
-                    elif self.num_classes == 1:
-                        val_acc = tf.reduce_mean(tf.cast(tf.equal(
-                                              tf.round(val_prediction), self.y),
-                                              tf.float32))
-            tf.summary.scalar("accuracy", val_acc)
-
-        return val_acc
 
     def cross_entropy_loss(self, prediction, y):
         """Generate a cross entropy loss function."""
@@ -528,6 +437,169 @@ class Network(object):
                     predictions=prediction,
                     labels=y
                     )
+
+    def fill_feed_dict(self, x, y):
+        feed_dict = {
+                self.input_var: x,
+                self.y: y,
+                }
+        return feed_dict
+
+    def train(self, sess, epochs, train_x, train_y, val_x, val_y,
+              batch_ratio=0.1, plot=True, change_rate=None):
+        """
+        Train the network.
+
+        Args:
+            epochs: how many times to iterate over the training data
+            train_x: the training data
+            train_y: the training truth
+            val_x: the validation data (should not be also in train_x)
+            val_y: the validation truth (should not be also in train_y)
+            batch_ratio: the percent (0-1) of how much data a batch should have
+            plot: If True, plot performance during training
+            change_rate: a function that updates learning rate (takes an alpha, returns an alpha)'
+
+        """
+        print('\nTraining {} in progress...\n'.format(self.name))
+
+        if batch_ratio > 1:
+            batch_ratio = 1
+        batch_ratio = float(batch_ratio)
+
+        self.record = dict(
+            epoch=[],
+            train_error=[],
+            train_accuracy=[],
+            validation_error=[],
+            validation_accuracy=[]
+        )
+
+        if self.stopping_rule == 'best_validation_error':
+            best_state = None
+            best_epoch = None
+            best_error = float('inf')
+
+        elif self.stopping_rule == 'best_validation_accuracy':
+            best_state = None
+            best_epoch = None
+            best_accuracy = 0.0
+
+        output_shape = self.network.shape
+        if output_shape[1:] != train_y.shape[1:]:
+            raise ValueError(
+                'Shape mismatch: non-batch dimensions don\'t match.'
+                '\n\tNetwork output shape: {}'
+                '\n\tLabel shape (train_y): {}'.format(
+                    output_shape,
+                    train_y.shape))
+        train_x_shape = train_x.shape
+        if train_x_shape[0] * batch_ratio < 1.0:
+            batch_ratio = 1.0 / train_x.shape[0]
+            print('Warning: Batch ratio too small. Changing to {:.5f}'.format(batch_ratio))
+        try:
+            if plot:
+                fig_number = plt.gcf().number + 1 if plt.fignum_exists(1) else 1
+
+            for epoch in range(epochs):
+                epoch_time = time.time()
+                print("--> Epoch: {}/{}".format(
+                    epoch,
+                    epochs - 1
+                ))
+
+                #train_x, train_y = shuffle(train_x, train_y, random_state=0)
+
+                for i in range(int(1 / batch_ratio)):
+                    size = train_x_shape[0]
+                    b_x = train_x[int(size * (i * batch_ratio)):
+                                  int(size * ((i + 1) * batch_ratio))]
+                    b_y = train_y[int(size * (i * batch_ratio)):
+                                  int(size * ((i + 1) * batch_ratio))]
+                    _, loss_value = sess.run([self.eval_correct, self.cost],
+                                        feed_dict=self.fill_feed_dict(b_x, b_y))
+
+                    sys.stdout.flush()
+                    sys.stdout.write('\r\tDone {:.1f}% of the epoch'.format
+                                     (100 * (i + 1) * batch_ratio))
+
+                    if change_rate is not None:
+                        if not callable(change_rate):
+                            raise ValueError(
+                                'Parameter change_rate must be a function '
+                                'that returns a new learning rate. '
+                                'Learning rate remains unchanged.'
+                            )
+                        # print('Modifying learning rate from {}'.format(
+                        #     self.learning_rate)
+                        # ),
+                        self.learning_rate = change_rate(
+                            self.init_learning_rate,
+                            self.minibatch_iteration
+                        )
+                        # print('to {}'.format(self.learning_rate))
+                    self.minibatch_iteration += 1
+                    print self.minibatch_iteration
+
+                train_error, train_accuracy = sess.run([self.eval_correct, self.cost],
+                                    feed_dict=self.fill_feed_dict(train_x, train_y))
+                validation_error, validation_accuracy = sess.run([self.eval_correct, self.cost],
+                                    feed_dict=self.fill_feed_dict(val_x, val_y))
+
+                if self.stopping_rule == 'best_validation_error' and validation_error < best_error:
+                    best_state = self.__getstate__()
+                    best_epoch = epoch
+                    best_error = validation_error
+
+                elif self.stopping_rule == 'best_validation_accuracy' and validation_accuracy > best_accuracy:
+                    best_state = self.__getstate__()
+                    best_epoch = epoch
+                    best_accuracy = validation_accuracy
+
+                self.record['epoch'].append(epoch)
+                self.record['train_error'].append(train_error)
+                self.record['train_accuracy'].append(train_accuracy)
+                self.record['validation_error'].append(validation_error)
+                self.record['validation_accuracy'].append(validation_accuracy)
+                epoch_time_spent = time.time() - epoch_time
+                print("\n\ttrain error: {:.6f} |"" train accuracy: {:.6f} in {:.2f}s".format(
+                    float(train_error),
+                    float(train_accuracy),
+                    epoch_time_spent))
+                print("\tvalid error: {:.6f} | valid accuracy: {:.6f} in {:.2f}s".format(
+                    float(validation_error),
+                    float(validation_accuracy),
+                    epoch_time_spent))
+
+                eta = epoch_time_spent * (epochs - epoch - 1)
+                minute, second = divmod(eta, 60)
+                hour, minute = divmod(minute, 60)
+                print("\tEstimated time left: {}:{}:{} (h:m:s)\n".format(
+                    int(hour),
+                    int(minute),
+                    int(second)))
+
+                if plot:
+                    plt.ion()
+                    plt.figure(fig_number)
+                    display_record(record=self.record)
+
+
+
+        except KeyboardInterrupt:
+            print("\n\n**********Training stopped prematurely.**********\n\n")
+        finally:
+            self.timestamp = get_timestamp()
+
+            if self.stopping_rule == 'best_validation_error':
+                print("STOPPING RULE: Rewinding to epoch {} which had the lowest validation error: {}\n".format(best_epoch, best_error))
+                #self.__setstate__(best_state)
+
+            elif self.stopping_rule == 'best_validation_accuracy':
+                print("STOPPING RULE: Rewinding to epoch {} which had the highest validation accuracy: {}\n".format(best_epoch, best_accuracy))
+                #self.__setstate__(best_state)
+
+
 
     @classmethod
     def load_model(cls, load_path):

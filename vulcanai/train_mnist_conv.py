@@ -35,12 +35,11 @@ label_map = {
 train_labels = get_one_hot(train_labels)
 test_labels = get_one_hot(test_labels)
 
-train_images = tf.reshape(train_images, (train_images.shape[0], 28, 28))
-test_images = tf.reshape(test_images, (test_images.shape[0], 28, 28))
-
+train_images = np.reshape(train_images, (train_images.shape[0], 28, 28))
+test_images = np.reshape(test_images, (test_images.shape[0], 28, 28))
 
 with tf.Graph().as_default() as tf_graph:
-    sess = tf.InteractiveSession()
+    init = tf.global_variables_initializer()
     input_var = tf.placeholder(tf.float32, shape=([None, 28, 28, 1]),
                                name='input')
     y = tf.placeholder(tf.float32, name='truth')
@@ -85,16 +84,19 @@ with tf.Graph().as_default() as tf_graph:
             pred_activation='softmax'
             )
 
-train_images = np.expand_dims(train_images, axis=1)
-test_images = np.expand_dims(test_images, axis=1)
-# # Use to load model from disk
-# # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
-dense_net.train(
-    epochs=200,
-    train_x=train_images[:50000],
-    train_y=train_labels[:50000],
-    val_x=train_images[50000:60000],
-    val_y=train_labels[50000:60000],
-    batch_ratio=0.05,
-    plot=False
-)
+    train_images = np.expand_dims(train_images, axis=3)
+    test_images = np.expand_dims(test_images, axis=3)
+
+with tf.Session(graph=tf_graph) as sess:
+    sess.run(init)
+    # # Use to load model from disk
+    # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
+    dense_net.train(sess,
+        epochs=200,
+        train_x=train_images[:50000],
+        train_y=train_labels[:50000],
+        val_x=train_images[50000:60000],
+        val_y=train_labels[50000:60000],
+        batch_ratio=0.05,
+        plot=False
+    )
