@@ -536,8 +536,8 @@ class Network(object):
                     sys.stdout.write('\r\tDone {:.1f}% of the epoch'.format
                                      (100 * (i + 1) * batch_ratio))
 
-                print("\nLoss= " + "{:.6f}".format(b_loss) + ", Accuracy= " + \
-                      "{:.5f}".format(b_acc))
+                print("\nLoss= " + "{:.6f}".format(epoch_loss) + ", Accuracy= " + \
+                      "{:.5f}".format(epoch_acc))
                 train_accuracy, train_error = sess.run(
                                                 [self.accuracy, self.cost],
                                                 feed_dict=self.fill_feed_dict(
