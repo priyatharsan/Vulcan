@@ -1,12 +1,10 @@
 from sklearn.utils import shuffle
 
 from net import Network
-from vulcanai.utils import get_one_hot
+from utils import get_one_hot
 from vulcanai import mnist_loader
 
 import tensorflow as tf
-
-import utils
 
 import numpy as np
 
@@ -88,6 +86,8 @@ with tf.Graph().as_default() as tf_graph:
 
 with tf.Session(graph=tf_graph) as sess:
     init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    summary_writer = tf.summary.FileWriter('./tf_logs', sess.graph)
     sess.run(init)
     # # Use to load model from disk
     # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
@@ -97,6 +97,8 @@ with tf.Session(graph=tf_graph) as sess:
         train_y=train_labels[:50000],
         val_x=train_images[50000:60000],
         val_y=train_labels[50000:60000],
-        batch_ratio=0.05,
+        summary_writer =summary_writer,
+        saver=saver,
+        batch_ratio=0.005,
         plot=False
     )

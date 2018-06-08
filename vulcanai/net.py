@@ -1,7 +1,5 @@
 import time
 
-import os
-
 import sys
 
 import numpy as np
@@ -13,6 +11,9 @@ from ops import activations, optimizers
 from utils import get_timestamp
 
 import cPickle as pickle
+
+import matplotlib.pyplot as plt
+
 
 
 class Network(object):
@@ -65,6 +66,8 @@ class Network(object):
 
         self.learning_rate = learning_rate
         self.init_learning_rate = learning_rate
+        self.learning_rate_placeholder = tf.placeholder(tf.float32, [],
+                                                    name='learning_rate')
         self.stopping_rule = stopping_rule
 
         self.input_network = input_network
@@ -93,13 +96,12 @@ class Network(object):
             nonlinearity=activations[self.activation])
 
         if self.y is not None:
-            if self.cost is None:
-                self.cost = self.loss_fn(self.network, self.y)
-            self.trainer = self.create_training_step(self.cost, self.learning_rate)
-            self.eval_correct = self.evaluation(self.network, self.y)
+            self.cost = self.loss_fn(self.network, self.y)
+            self.trainer = self.create_training_step(self.cost)
+            self.accuracy = self.evaluation(self.network, self.y)
 
         # Build the summary Tensor based on the TF collection of Summaries.
-        summary = tf.summary.merge_all()
+        self.summary = tf.summary.merge_all()
         try:
             self.timestamp
         except AttributeError:
@@ -117,7 +119,7 @@ class Network(object):
 
         return loss
 
-    def create_training_step(self, loss, learning_rate):
+    def create_training_step(self, loss):
         """
         Creates an optimizer and applies the gradients to all trainable variables.
         The train_step returned by this function is passed to the
@@ -134,24 +136,25 @@ class Network(object):
         # calculate updates using ADAM optimization gradient descent
         if self.optimizer == 'adam':
             optimizer = optimizers[self.optimizer](
-                            learning_rate=learning_rate,
+                            learning_rate=self.learning_rate_placeholder,
                             beta1=0.9,
                             beta2=0.999,
                             epsilon=1e-08
             )
         elif self.optimizer == 'sgd':
             optimizer = optimizers[self.optimizer](
-                            learning_rate=learning_rate
+                            learning_rate=self.learning_rate_placeholder
             )
         else:
             updates = None
             ValueError("No optimizer found")
-
-        with tf.name_scope("train"):
+        trainable = tf.trainable_variables()
+        with tf.name_scope("train_step"):
             # Variable to track the global step.
             global_step = tf.Variable(0, name='global_step', trainable=False)
-            train_step = optimizer.minimize(self.cost, global_step=global_step)
-
+            train_step = optimizer.minimize(loss,
+                                            global_step=global_step,
+                                            var_list=trainable)
         return train_step
 
     def evaluation(self, logits, labels_placeholder):
@@ -442,14 +445,15 @@ class Network(object):
                     labels=y
                     )
 
-    def fill_feed_dict(self, x, y):
+    def fill_feed_dict(self, x, y, lr):
         feed_dict = {
                 self.input_var: x,
                 self.y: y,
+                self.learning_rate_placeholder: lr
                 }
         return feed_dict
 
-    def train(self, sess, epochs, train_x, train_y, val_x, val_y,
+    def train(self, sess, epochs, train_x, train_y, val_x, val_y, summary_writer, saver,
               batch_ratio=0.1, plot=True, change_rate=None):
         """
         Train the network.
@@ -469,7 +473,7 @@ class Network(object):
 
         if batch_ratio > 1:
             batch_ratio = 1
-        batch_ratio = float(batch_ratio)
+        self.batch_ratio = float(batch_ratio)
 
         self.record = dict(
             epoch=[],
@@ -507,58 +511,45 @@ class Network(object):
 
             for epoch in range(epochs):
                 epoch_time = time.time()
-                print("--> Epoch: {}/{}".format(
+                print("\n--> Epoch: {}/{}".format(
                     epoch,
                     epochs - 1
                 ))
 
-                #train_x, train_y = shuffle(train_x, train_y, random_state=0)
-
                 for i in range(int(1 / batch_ratio)):
-                    size = train_x_shape[0]
+                    size = train_x.shape[0]
                     b_x = train_x[int(size * (i * batch_ratio)):
                                   int(size * ((i + 1) * batch_ratio))]
                     b_y = train_y[int(size * (i * batch_ratio)):
                                   int(size * ((i + 1) * batch_ratio))]
-                    _, loss_value = sess.run([self.eval_correct, self.cost],
-                                        feed_dict=self.fill_feed_dict(b_x, b_y))
-
+                    opt = sess.run(self.trainer,
+                                   feed_dict=self.fill_feed_dict(
+                                                                  b_x,
+                                                                  b_y,
+                                                                  self.learning_rate))
+                    epoch_loss, epoch_acc = sess.run([self.cost, self.accuracy],
+                                         feed_dict=self.fill_feed_dict(
+                                                                      b_x,
+                                                                      b_y,
+                                                                      self.learning_rate))
                     sys.stdout.flush()
                     sys.stdout.write('\r\tDone {:.1f}% of the epoch'.format
                                      (100 * (i + 1) * batch_ratio))
 
-                    if change_rate is not None:
-                        if not callable(change_rate):
-                            raise ValueError(
-                                'Parameter change_rate must be a function '
-                                'that returns a new learning rate. '
-                                'Learning rate remains unchanged.'
-                            )
-                        # print('Modifying learning rate from {}'.format(
-                        #     self.learning_rate)
-                        # ),
-                        self.learning_rate = change_rate(
-                            self.init_learning_rate,
-                            self.minibatch_iteration
-                        )
-                        # print('to {}'.format(self.learning_rate))
-                    self.minibatch_iteration += 1
-
-                train_error, train_accuracy = sess.run([self.eval_correct, self.cost],
-                                    feed_dict=self.fill_feed_dict(train_x, train_y))
-                validation_error, validation_accuracy = sess.run([self.eval_correct, self.cost],
-                                    feed_dict=self.fill_feed_dict(val_x, val_y))
-
-                if self.stopping_rule == 'best_validation_error' and validation_error < best_error:
-                    best_state = self.__getstate__()
-                    best_epoch = epoch
-                    best_error = validation_error
-
-                elif self.stopping_rule == 'best_validation_accuracy' and validation_accuracy > best_accuracy:
-                    best_state = self.__getstate__()
-                    best_epoch = epoch
-                    best_accuracy = validation_accuracy
-
+                print("\nLoss= " + "{:.6f}".format(b_loss) + ", Accuracy= " + \
+                      "{:.5f}".format(b_acc))
+                train_accuracy, train_error = sess.run(
+                                                [self.accuracy, self.cost],
+                                                feed_dict=self.fill_feed_dict(
+                                                                        train_x,
+                                                                        train_y,
+                                                                        self.learning_rate))
+                validation_accuracy, validation_error = sess.run(
+                                                [self.accuracy, self.cost],
+                                                feed_dict=self.fill_feed_dict(
+                                                                        val_x,
+                                                                        val_y,
+                                                                        self.learning_rate))
                 self.record['epoch'].append(epoch)
                 self.record['train_error'].append(train_error)
                 self.record['train_accuracy'].append(train_accuracy)
@@ -574,35 +565,12 @@ class Network(object):
                     float(validation_accuracy),
                     epoch_time_spent))
 
-                eta = epoch_time_spent * (epochs - epoch - 1)
-                minute, second = divmod(eta, 60)
-                hour, minute = divmod(minute, 60)
-                print("\tEstimated time left: {}:{}:{} (h:m:s)\n".format(
-                    int(hour),
-                    int(minute),
-                    int(second)))
-
-                if plot:
-                    plt.ion()
-                    plt.figure(fig_number)
-                    display_record(record=self.record)
-
 
 
         except KeyboardInterrupt:
             print("\n\n**********Training stopped prematurely.**********\n\n")
         finally:
             self.timestamp = get_timestamp()
-
-            if self.stopping_rule == 'best_validation_error':
-                print("STOPPING RULE: Rewinding to epoch {} which had the lowest validation error: {}\n".format(best_epoch, best_error))
-                #self.__setstate__(best_state)
-
-            elif self.stopping_rule == 'best_validation_accuracy':
-                print("STOPPING RULE: Rewinding to epoch {} which had the highest validation accuracy: {}\n".format(best_epoch, best_accuracy))
-                #self.__setstate__(best_state)
-
-
 
     @classmethod
     def load_model(cls, load_path):
@@ -616,6 +584,7 @@ class Network(object):
         with open(load_path, 'rb') as f:
             instance = pickle.load(f)
         return instance
+
 
 
 

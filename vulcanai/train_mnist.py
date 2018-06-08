@@ -1,6 +1,6 @@
 
 from net import Network
-from vulcanai.utils import get_one_hot
+from utils import get_one_hot
 from vulcanai import mnist_loader
 
 import tensorflow as tf
@@ -17,8 +17,7 @@ network_dense_config = {
     'dropouts': [0.2, .05],
 }
 
-with tf.Graph().as_default():
-    sess = tf.InteractiveSession()
+with tf.Graph().as_default() as tf_graph:
     input_var, y = utils.init_placeholders(len(train_images[0]), len(train_labels[0]))
 
     dense_net = Network(
@@ -32,3 +31,21 @@ with tf.Graph().as_default():
     activation='rectify',
     pred_activation='softmax',
     optimizer='adam')
+
+with tf.Session(graph=tf_graph) as sess:
+    init = tf.global_variables_initializer()
+    saver = tf.train.Saver()
+    summary_writer = tf.summary.FileWriter('./tf_logs', sess.graph)
+    sess.run(init)
+
+    dense_net.train(sess,
+        epochs=5,
+        train_x=train_images[:50000],
+        train_y=train_labels[:50000],
+        val_x=train_images[50000:60000],
+        val_y=train_labels[50000:60000],
+        summary_writer =summary_writer,
+        saver=saver,
+        batch_ratio=0.05,
+        plot=True
+    )
