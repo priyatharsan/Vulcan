@@ -39,7 +39,6 @@ train_images = np.reshape(train_images, (train_images.shape[0], 28, 28))
 test_images = np.reshape(test_images, (test_images.shape[0], 28, 28))
 
 with tf.Graph().as_default() as tf_graph:
-    init = tf.global_variables_initializer()
     input_var = tf.placeholder(tf.float32, shape=([None, 28, 28, 1]),
                                name='input')
     y = tf.placeholder(tf.float32, name='truth')
@@ -88,6 +87,7 @@ with tf.Graph().as_default() as tf_graph:
     test_images = np.expand_dims(test_images, axis=3)
 
 with tf.Session(graph=tf_graph) as sess:
+    init = tf.global_variables_initializer()
     sess.run(init)
     # # Use to load model from disk
     # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')

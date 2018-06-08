@@ -1,5 +1,9 @@
 import time
 
+import os
+
+import sys
+
 import numpy as np
 
 import tensorflow as tf
@@ -539,7 +543,6 @@ class Network(object):
                         )
                         # print('to {}'.format(self.learning_rate))
                     self.minibatch_iteration += 1
-                    print self.minibatch_iteration
 
                 train_error, train_accuracy = sess.run([self.eval_correct, self.cost],
                                     feed_dict=self.fill_feed_dict(train_x, train_y))
