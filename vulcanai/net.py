@@ -96,30 +96,17 @@ class Network(object):
             nonlinearity=activations[self.activation])
 
         if self.y is not None:
-            self.cost = self.loss_fn(self.network, self.y)
-            self.trainer = self.create_training_step(self.cost)
+            self.cost, self.trainer = self.create_trainer(self.network,
+                                                                self.y)
             self.accuracy = self.evaluation(self.network, self.y)
 
-        # Build the summary Tensor based on the TF collection of Summaries.
-        self.summary = tf.summary.merge_all()
         try:
             self.timestamp
         except AttributeError:
             self.timestamp = get_timestamp()
         self.minibatch_iteration = 0
 
-    def loss_fn(self, logits, labels_placeholder):
-
-        print("Calculating Loss")
-
-        if self.num_classes is None or self.num_classes == 0:
-            loss = self.mse_loss(logits, labels_placeholder)
-        else:
-            loss = self.cross_entropy_loss(logits, labels_placeholder)
-
-        return loss
-
-    def create_training_step(self, loss):
+    def create_trainer(self, logits, labels_placeholder):
         """
         Creates an optimizer and applies the gradients to all trainable variables.
         The train_step returned by this function is passed to the
@@ -130,9 +117,19 @@ class Network(object):
         Returns:
             train_step: The Op for training.
         """
+
+        print("Calculating Loss")
+
+        if self.num_classes is None or self.num_classes == 0:
+            loss = self.mse_loss(logits, labels_placeholder)
+        else:
+            loss = self.cross_entropy_loss(logits, labels_placeholder)
+
+        #loss = tf.reduce_mean(loss)
+
         print("Creating {} Trainer...".format(self.name))
         # Add a scalar summary for the snapshot loss.
-        tf.summary.scalar('loss', self.cost)
+        tf.summary.scalar('loss', loss)
         # calculate updates using ADAM optimization gradient descent
         if self.optimizer == 'adam':
             optimizer = optimizers[self.optimizer](
@@ -155,7 +152,7 @@ class Network(object):
             train_step = optimizer.minimize(loss,
                                             global_step=global_step,
                                             var_list=trainable)
-        return train_step
+        return loss, train_step
 
     def evaluation(self, logits, labels_placeholder):
         """
@@ -196,7 +193,7 @@ class Network(object):
         if mode == 'dense':
             jsonschema.validate(config, schemas.dense_network)
 
-            network = self.build_dense_network_tf(
+            network = self.create_dense_network(
                 units=config.get('units'),
                 dropouts=config.get('dropouts'),
                 nonlinearity=nonlinearity
@@ -326,7 +323,7 @@ class Network(object):
             print('\t\t{} {}'.format(network.shape, network.name))
         return network
 
-    def build_dense_network_tf(self, units, dropouts, nonlinearity):
+    def create_dense_network(self, units, dropouts, nonlinearity):
         """
         Generate a fully connected network of dense layers.
 
@@ -470,6 +467,8 @@ class Network(object):
 
         """
         print('\nTraining {} in progress...\n'.format(self.name))
+        self.run_metadata = tf.RunMetadata()
+        self.summaries = tf.summary.merge_all()
 
         if batch_ratio > 1:
             batch_ratio = 1
@@ -522,7 +521,7 @@ class Network(object):
                                   int(size * ((i + 1) * batch_ratio))]
                     b_y = train_y[int(size * (i * batch_ratio)):
                                   int(size * ((i + 1) * batch_ratio))]
-                    opt = sess.run(self.trainer,
+                    summary, opt = sess.run([self.summaries, self.trainer],
                                    feed_dict=self.fill_feed_dict(
                                                                   b_x,
                                                                   b_y,
@@ -538,6 +537,7 @@ class Network(object):
 
                 print("\nLoss= " + "{:.6f}".format(epoch_loss) + ", Accuracy= " + \
                       "{:.5f}".format(epoch_acc))
+                summary_writer.add_summary(summary, epoch)
                 train_accuracy, train_error = sess.run(
                                                 [self.accuracy, self.cost],
                                                 feed_dict=self.fill_feed_dict(

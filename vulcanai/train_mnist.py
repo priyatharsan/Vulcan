@@ -39,7 +39,7 @@ with tf.Session(graph=tf_graph) as sess:
     sess.run(init)
 
     dense_net.train(sess,
-        epochs=5,
+        epochs=200,
         train_x=train_images[:50000],
         train_y=train_labels[:50000],
         val_x=train_images[50000:60000],
