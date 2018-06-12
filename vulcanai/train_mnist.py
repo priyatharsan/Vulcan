@@ -13,13 +13,13 @@ train_labels = get_one_hot(train_labels)
 
 network_dense_config = {
     'mode': 'dense',
-    'units': [512, 100],
-    'dropouts': [0.2, .05],
+    'units': [512],
+    'dropouts': [0.2],
 }
 
 with tf.Graph().as_default() as tf_graph:
     input_var, y = utils.initialize_pl(tf.float32, tf.float32,
-                                      [None,len(train_images[0])]
+                                      [None,len(train_images[0])],
                                       [None,len(train_labels[0])])
 
     dense_net = Network(
@@ -34,14 +34,18 @@ with tf.Graph().as_default() as tf_graph:
     pred_activation='softmax',
     optimizer='adam')
 
+
+log_path = 'tf_logs'
 with tf.Session(graph=tf_graph) as sess:
     init = tf.global_variables_initializer()
     saver = tf.train.Saver()
-    summary_writer = tf.summary.FileWriter('./tf_logs', sess.graph)
+
+    summary_writer = tf.summary.FileWriter(log_path, sess.graph)
+
     sess.run(init)
 
     dense_net.train(sess,
-        epochs=200,
+        epochs=2,
         train_x=train_images[:50000],
         train_y=train_labels[:50000],
         val_x=train_images[50000:60000],
@@ -51,3 +55,5 @@ with tf.Session(graph=tf_graph) as sess:
         batch_ratio=0.05,
         plot=True
     )
+
+    dense_net.save_model(sess, saver)

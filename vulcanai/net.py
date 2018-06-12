@@ -2,6 +2,8 @@ import time
 
 import sys
 
+import os
+
 import numpy as np
 
 import tensorflow as tf
@@ -10,10 +12,11 @@ from ops import activations, optimizers
 
 from utils import get_timestamp
 
+import json
+
 import cPickle as pickle
 
 import matplotlib.pyplot as plt
-
 
 
 class Network(object):
@@ -471,6 +474,10 @@ class Network(object):
 
         """
         print('\nTraining {} in progress...\n'.format(self.name))
+
+        self.sess = sess
+        self.saver = saver
+        self.summary_writer = summary_writer
         self.run_metadata = tf.RunMetadata()
         self.summaries = tf.summary.merge_all()
 
@@ -575,6 +582,28 @@ class Network(object):
             print("\n\n**********Training stopped prematurely.**********\n\n")
         finally:
             self.timestamp = get_timestamp()
+    def save_model(self, sess, saver, save_path='models'):
+        """
+        Will save the model parameters to a npz file.
+
+        Args:
+            save_path: the location where you want to save the params
+        """
+        if self.input_network is not None:
+            if not hasattr(self.input_network['network'], 'save_name'):
+                self.input_network['network'].save_model()
+
+        if not os.path.exists(save_path):
+            print('*models* directory not found, creating {}'.format(save_path))
+            os.makedirs(save_path)
+        files_path = os.path.join(save_path, "{}".format(self.timestamp))
+        os.makedirs(files_path)
+        self.save_name = '{}\{}'.format(files_path, self.name)
+        print('Saving {} model files in: {}'.format(self.name, files_path))
+
+        saver.save(sess, self.save_name)
+
+        self.save_metadata(files_path)
 
     @classmethod
     def load_model(cls, load_path):
@@ -589,6 +618,57 @@ class Network(object):
             instance = pickle.load(f)
         return instance
 
+    def save_record(self, save_path='records'):
+        """
+        Will save the training records to file to be loaded up later.
+
+        Args:
+            save_path: the location where you want to save the records
+        """
+        if self.record is not None:
+            if not os.path.exists(save_path):
+                print('Path not found, creating {}'.format(save_path))
+                os.makedirs(save_path)
+
+            file_path = os.path.join(save_path, "{}{}".format(self.timestamp,
+                                                              self.name))
+            print('Saving records as: {}_stats.pickle'.format(file_path))
+            with open('{}_stats.pickle'.format(file_path), 'w') as output:
+                pickle.dump(self.record, output, -1)
+        else:
+            print("No record to save. Train the model first.")
+
+    def save_metadata(self, files_path='models'):
+        """
+        Will save network configuration alongside weights.
+
+        Args:
+            file_path: the npz file path without the npz
+        """
+        config = {
+            "{}".format(files_path): {
+                "input_dim": self.input_dim,
+                "input_var": "{}".format(self.input_var),
+                "y": "{}".format(self.y),
+                "config": self.config,
+                "num_classes": self.num_classes,
+                "input_network": {
+                    'network': None,
+                    'layer': None
+                }
+            }
+        }
+
+        if self.input_network:
+            config["{}".format(files_path)]["input_network"]['network'] = \
+                self.input_network['network'].save_name
+            config["{}".format(files_path)]["input_network"]['layer'] = \
+                self.input_network['layer']
+
+        json_file = "{}\metadata.json".format(files_path)
+        print('Saving metadata to {}'.format(json_file))
+        with open(json_file, 'w') as f:
+            json.dump(config, f)
 
 
 
