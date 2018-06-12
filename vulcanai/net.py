@@ -71,6 +71,7 @@ class Network(object):
         self.stopping_rule = stopping_rule
 
         self.input_network = input_network
+
         self.layers = []
         self.cost = None
         self.val_cost = None
@@ -79,8 +80,9 @@ class Network(object):
             if self.input_network.get('network', False) is not False and \
                self.input_network.get('layer', False) is not False and \
                self.input_network.get('get_params', None) is not None:
-                self.input_var = self.input_network['network'].layers[0]
-                self.input_dim = self.input_network['network'].layers[self.input_network['layer']].shape
+                self.layers = self.input_network['network'].layers
+                self.input_var = self.layers[0].input
+                self.input_dim = self.layers[self.input_network['layer']].shape
 
             else:
                 raise ValueError(
@@ -95,9 +97,8 @@ class Network(object):
             config=self.config,
             nonlinearity=activations[self.activation])
 
-        if self.y is not None:
-            self.cost, self.trainer = self.create_trainer(self.network,
-                                                                self.y)
+        if self.num_classes is not None:
+            self.cost, self.opt = self.training()
             self.accuracy = self.evaluation(self.network, self.y)
 
         try:
@@ -106,10 +107,10 @@ class Network(object):
             self.timestamp = get_timestamp()
         self.minibatch_iteration = 0
 
-    def create_trainer(self, logits, labels_placeholder):
+    def training(self):
         """
         Creates an optimizer and applies the gradients to all trainable variables.
-        The train_step returned by this function is passed to the
+        The train_op returned by this function is passed to the
         `sess.run()` call to cause the model to train.
 
         Creates a summarizer to track the loss over time in TensorBoard.
@@ -119,18 +120,17 @@ class Network(object):
         """
 
         print("Calculating Loss")
+        with tf.variable_scope('loss'):
+            if self.num_classes is None or self.num_classes == 0:
+                loss = self.mse_loss(self.network, self.y)
+            else:
+                loss = self.cross_entropy_loss(self.network, self.y)
 
-        if self.num_classes is None or self.num_classes == 0:
-            loss = self.mse_loss(logits, labels_placeholder)
-        else:
-            loss = self.cross_entropy_loss(logits, labels_placeholder)
-
-        #loss = tf.reduce_mean(loss)
-
-        print("Creating {} Trainer...".format(self.name))
+            loss = tf.reduce_mean(loss)
         # Add a scalar summary for the snapshot loss.
         tf.summary.scalar('loss', loss)
-        # calculate updates using ADAM optimization gradient descent
+        print("Creating {} Trainer...".format(self.name))
+
         if self.optimizer == 'adam':
             optimizer = optimizers[self.optimizer](
                             learning_rate=self.learning_rate_placeholder,
@@ -146,13 +146,13 @@ class Network(object):
             updates = None
             ValueError("No optimizer found")
         trainable = tf.trainable_variables()
-        with tf.name_scope("train_step"):
+        with tf.name_scope("train_op"):
             # Variable to track the global step.
             global_step = tf.Variable(0, name='global_step', trainable=False)
-            train_step = optimizer.minimize(loss,
-                                            global_step=global_step,
-                                            var_list=trainable)
-        return loss, train_step
+            train_op = optimizer.minimize(loss,
+                                        global_step=global_step,
+                                        var_list=trainable)
+        return loss, train_op
 
     def evaluation(self, logits, labels_placeholder):
         """
@@ -256,22 +256,22 @@ class Network(object):
         if self.input_network is None:
             with tf.variable_scope('Input_layer'):
                 print('\tInput Layer:')
-                network = tf.keras.layers.InputLayer(
+                input_layer = tf.keras.layers.InputLayer(
                                     input_shape=self.input_dim,
                                     input_tensor=self.input_var,
                                     name="{}_input"
-                                    .format(self.name)).output
+                                    .format(self.name))
+                network = input_layer.output
                 print('\t\t{} {}'.format(network.shape, network.name))
-                self.layers.append(network)
+                self.layers.append(input_layer)
         else:
-            with tf.variable_scope('prev_layer'):
-                network = self.input_network['network']. \
-                    layers[self.input_network['layer']]
+            network = self.input_network['network']. \
+                layers[self.input_network['layer']]
 
-                print('Appending layer {} from {} to {}'.format(
-                    self.input_network['layer'],
-                    self.input_network['network'].name,
-                    self.name))
+            print('Appending layer {} from {} to {}'.format(
+                self.input_network['layer'],
+                self.input_network['network'].name,
+                self.name))
 
         if conv_dim == 1:
             conv_layer = tf.layers.conv1d
@@ -297,30 +297,31 @@ class Network(object):
             ValueError("Convolution is only supported for one of the first three dimensions")
 
         print('\tHidden Layers:')
-        for i, (f, f_size, s, p_s) in enumerate(zip(filters,
-                                                    filter_size,
-                                                    stride,
-                                                    pool_stride)):
-            layer_name = "conv{}D_layer{}".format(conv_dim, i)
-            with tf.variable_scope(layer_name):
-                network = conv_layer(
-                    inputs=network,
-                    filters=f,
-                    kernel_size=f_size,
-                    strides=s,
-                    padding='same',
-                    activation=nonlinearity
-                    )
+        with tf.variable_scope("Hidden_layers"):
+            for i, (f, f_size, s, p_s) in enumerate(zip(filters,
+                                                        filter_size,
+                                                        stride,
+                                                        pool_stride)):
+                layer_name = "conv{}D_layer{}".format(conv_dim, i)
+                with tf.variable_scope(layer_name):
+                    network = conv_layer(
+                        inputs=network,
+                        filters=f,
+                        kernel_size=f_size,
+                        strides=s,
+                        padding='same',
+                        activation=nonlinearity
+                        )
+                    self.layers.append(network)
+                    print('\t\t{} {}'.format(network.shape, network.name))
+                    network = pool(
+                        inputs=network,
+                        pool_size=p_s,
+                        strides=p_s,
+                        padding='same'
+                        )
                 self.layers.append(network)
                 print('\t\t{} {}'.format(network.shape, network.name))
-                network = pool(
-                    inputs=network,
-                    pool_size=p_s,
-                    strides=p_s,
-                    padding='same'
-                    )
-            self.layers.append(network)
-            print('\t\t{} {}'.format(network.shape, network.name))
         return network
 
     def create_dense_network(self, units, dropouts, nonlinearity):
@@ -343,21 +344,22 @@ class Network(object):
         if self.input_network is None:
             with tf.variable_scope('Input_layer'):
                 print('\tInput Layer:')
-                network = tf.keras.layers.InputLayer(
+                input_layer = tf.keras.layers.InputLayer(
                                     input_shape=self.input_dim,
                                     input_tensor=self.input_var,
                                     name="{}_input"
-                                    .format(self.name)).output
+                                    .format(self.name))
+                network = input_layer.output
                 print('\t\t{} {}'.format(network.shape, network.name))
-                self.layers.append(network)
+                self.layers.append(input_layer)
         else:
-            with tf.variable_scope('prev_layer'):
-                network = self.input_network['network']. \
-                    layers[self.input_network['layer']]
-                print('Appending layer {} from {} to {}'.format(
-                    self.input_network['layer'],
-                    self.input_network['network'].name,
-                    self.name))
+
+            network = self.input_network['network']. \
+                layers[self.input_network['layer']]
+            print('Appending layer {} from {} to {}'.format(
+                self.input_network['layer'],
+                self.input_network['network'].name,
+                self.name))
 
         if nonlinearity.__name__ == 'selu':
             network = tf.layers.batch_normalization(
@@ -369,36 +371,37 @@ class Network(object):
             network = tf.layers.flatten(network)
 
         print('\tHidden Layers:')
-        for i, (num_units, prob_dropout) in enumerate(zip(units, dropouts)):
-            layer_name = 'dense_layer%s' % i
-            with tf.variable_scope(layer_name):
-                if nonlinearity.__name__ == 'selu':
-                    new_layer = tf.layers.dense(
-                                        inputs=network,
-                                        units=num_units,
-                                        activation=nonlinearity,
-                                        kernel_initializer=tf.initializers
-                                        .random_normal(stddev=np.sqrt(
-                                            1.0 / num_units)),
-                                        bias_regularizer=tf.initializers
-                                        .random_normal(stddev=0.0),
-                                        name="dense_selu")
+        with tf.variable_scope("Hidden_layers"):
+            for i, (num_units, prob_dropout) in enumerate(zip(units, dropouts)):
+                layer_name = 'dense_layer%s' % i
+                with tf.variable_scope(layer_name):
+                    if nonlinearity.__name__ == 'selu':
+                        new_layer = tf.layers.dense(
+                                            inputs=network,
+                                            units=num_units,
+                                            activation=nonlinearity,
+                                            kernel_initializer=tf.initializers
+                                            .random_normal(stddev=np.sqrt(
+                                                1.0 / num_units)),
+                                            bias_regularizer=tf.initializers
+                                            .random_normal(stddev=0.0),
+                                            name="dense_selu")
 
-                    network = tf.contrib.nn.alpha_dropout(new_layer,
+                        network = tf.contrib.nn.alpha_dropout(new_layer,
+                                                            prob_dropout)
+                        tf.summary.histogram(layer_name + '/selu', network)
+                    else:
+                        new_layer = tf.layers.dense(
+                                            inputs=network,
+                                            units=num_units,
+                                            activation=nonlinearity,
+                                            )  # By default TF assumes Glorot uniform initializer for weights and zero initializer for bias
+
+                        network = tf.nn.dropout(new_layer,
                                                         prob_dropout)
-                    tf.summary.histogram(layer_name + '/selu', network)
-                else:
-                    new_layer = tf.layers.dense(
-                                        inputs=network,
-                                        units=num_units,
-                                        activation=nonlinearity,
-                                        )  # By default TF assumes Glorot uniform initializer for weights and zero initializer for bias
-
-                    network = tf.nn.dropout(new_layer,
-                                                    prob_dropout)
-                    tf.summary.histogram(layer_name+'/'+self.activation, network)
-            self.layers.append(network)
-            print('\t\t{} {}'.format(network.shape, network.name))
+                        tf.summary.histogram(layer_name+'/'+self.activation, network)
+                self.layers.append(network)
+                print('\t\t{} {}'.format(network.shape, network.name))
 
         return network
 
@@ -449,6 +452,7 @@ class Network(object):
                 self.learning_rate_placeholder: lr
                 }
         return feed_dict
+
 
     def train(self, sess, epochs, train_x, train_y, val_x, val_y, summary_writer, saver,
               batch_ratio=0.1, plot=True, change_rate=None):
@@ -521,7 +525,7 @@ class Network(object):
                                   int(size * ((i + 1) * batch_ratio))]
                     b_y = train_y[int(size * (i * batch_ratio)):
                                   int(size * ((i + 1) * batch_ratio))]
-                    summary, opt = sess.run([self.summaries, self.trainer],
+                    summary, opt = sess.run([self.summaries, self.opt],
                                    feed_dict=self.fill_feed_dict(
                                                                   b_x,
                                                                   b_y,
@@ -544,28 +548,28 @@ class Network(object):
                                                                         train_x,
                                                                         train_y,
                                                                         self.learning_rate))
-                validation_accuracy, validation_error = sess.run(
-                                                [self.accuracy, self.cost],
-                                                feed_dict=self.fill_feed_dict(
-                                                                        val_x,
-                                                                        val_y,
-                                                                        self.learning_rate))
                 self.record['epoch'].append(epoch)
                 self.record['train_error'].append(train_error)
                 self.record['train_accuracy'].append(train_accuracy)
-                self.record['validation_error'].append(validation_error)
-                self.record['validation_accuracy'].append(validation_accuracy)
-                epoch_time_spent = time.time() - epoch_time
+                train_epoch = time.time() - epoch_time
                 print("\n\ttrain error: {:.6f} |"" train accuracy: {:.6f} in {:.2f}s".format(
                     float(train_error),
                     float(train_accuracy),
-                    epoch_time_spent))
-                print("\tvalid error: {:.6f} | valid accuracy: {:.6f} in {:.2f}s".format(
-                    float(validation_error),
-                    float(validation_accuracy),
-                    epoch_time_spent))
-
-
+                    train_epoch))
+                if val_x is not None:
+                    validation_accuracy, validation_error = sess.run(
+                                                    [self.accuracy, self.cost],
+                                                    feed_dict=self.fill_feed_dict(
+                                                                            val_x,
+                                                                            val_y,
+                                                                            self.learning_rate))
+                    self.record['validation_error'].append(validation_error)
+                    self.record['validation_accuracy'].append(validation_accuracy)
+                    valid_epoch = time.time() - epoch_time
+                    print("\tvalid error: {:.6f} | valid accuracy: {:.6f} in {:.2f}s".format(
+                        float(validation_error),
+                        float(validation_accuracy),
+                        valid_epoch))
 
         except KeyboardInterrupt:
             print("\n\n**********Training stopped prematurely.**********\n\n")

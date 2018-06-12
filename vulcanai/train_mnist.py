@@ -18,7 +18,9 @@ network_dense_config = {
 }
 
 with tf.Graph().as_default() as tf_graph:
-    input_var, y = utils.init_placeholders(len(train_images[0]), len(train_labels[0]))
+    input_var, y = utils.initialize_pl(tf.float32, tf.float32,
+                                      [None,len(train_images[0])]
+                                      [None,len(train_labels[0])])
 
     dense_net = Network(
     name='3_dense_test',

@@ -4,6 +4,8 @@ from net import Network
 from utils import get_one_hot
 from vulcanai import mnist_loader
 
+import utils
+
 import tensorflow as tf
 
 import numpy as np
@@ -37,9 +39,10 @@ train_images = np.reshape(train_images, (train_images.shape[0], 28, 28))
 test_images = np.reshape(test_images, (test_images.shape[0], 28, 28))
 
 with tf.Graph().as_default() as tf_graph:
-    input_var = tf.placeholder(tf.float32, shape=([None, 28, 28, 1]),
-                               name='input')
-    y = tf.placeholder(tf.float32, name='truth')
+    input_var, y =  utils.initialize_pl(tf.float32, tf.float32,
+                                        [None, 28, 28, 1],
+                                        [None, 10])
+
 
     network_conv_config = {
         'mode': 'conv',
@@ -83,8 +86,9 @@ with tf.Graph().as_default() as tf_graph:
 
     train_images = np.expand_dims(train_images, axis=3)
     test_images = np.expand_dims(test_images, axis=3)
+    gpu_options = tf.GPUOptions(allow_growth=True)
 
-with tf.Session(graph=tf_graph) as sess:
+with tf.Session(graph=tf_graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
     init = tf.global_variables_initializer()
     saver = tf.train.Saver()
     summary_writer = tf.summary.FileWriter('./tf_logs', sess.graph)
@@ -93,10 +97,10 @@ with tf.Session(graph=tf_graph) as sess:
     # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
     dense_net.train(sess,
         epochs=200,
-        train_x=train_images[:50000],
-        train_y=train_labels[:50000],
-        val_x=train_images[50000:60000],
-        val_y=train_labels[50000:60000],
+        train_x=train_images[:5000],
+        train_y=train_labels[:5000],
+        val_x=train_images[50000:55000],
+        val_y=train_labels[50000:55000],
         summary_writer =summary_writer,
         saver=saver,
         batch_ratio=0.005,

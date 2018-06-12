@@ -7,18 +7,16 @@ import numpy as np
 from sklearn.preprocessing import LabelBinarizer
 
 
-def init_placeholders(feature_size, num_labels, batch_size = None):
+def initialize_pl(x_dtype, y_type, x_shape=None, y_shape=None):
     """Generate placeholder variables to represent the input tensors.
     These placeholders are used as inputs by the rest of the model building
     code and will be fed from the downloaded data in the .run() loop, below.
     """
 
-    X_placeholder = tf.placeholder(tf.float32, shape=([batch_size,
-                                                            feature_size]),
-                                                            name = 'input')
-    Y_placeholder = tf.placeholder(tf.float32, shape=([batch_size,
-                                                            num_labels]),
-                                                            name = 'truth')
+    X_placeholder = tf.placeholder(x_dtype, shape=(x_shape),
+                                  name = 'input_placeholder')
+    Y_placeholder = tf.placeholder(y_type, shape=(y_shape),
+                                  name = 'labels_placeholder')
 
     return X_placeholder, Y_placeholder
 
