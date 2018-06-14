@@ -96,6 +96,9 @@ class Network(object):
                     )
                 )
 
+        if isinstance(self.input_dim, tf.TensorShape):
+            self.input_dim = self.input_dim.as_list()
+
         self.network = self.create_network(
             config=self.config,
             nonlinearity=activations[self.activation])
@@ -149,7 +152,7 @@ class Network(object):
             updates = None
             ValueError("No optimizer found")
         trainable = tf.trainable_variables()
-        with tf.name_scope("train_op"):
+        with tf.name_scope("train_op_{}".format(self.name)):
             # Variable to track the global step.
             global_step = tf.Variable(0, name='global_step', trainable=False)
             train_op = optimizer.minimize(loss,
@@ -584,39 +587,48 @@ class Network(object):
             self.timestamp = get_timestamp()
     def save_model(self, sess, saver, save_path='models'):
         """
-        Will save the model parameters to a npz file.
+        Will save the model
 
         Args:
-            save_path: the location where you want to save the params
+            save_path: the location where you want to save the model and params
         """
+        if not os.path.exists(save_path):
+            print('Path not found, creating {}'.format(save_path))
+            os.makedirs(save_path)
+
+        file_path = os.path.join(save_path, "{}{}".format(self.timestamp,
+                                                          self.name))
         if self.input_network is not None:
             if not hasattr(self.input_network['network'], 'save_name'):
-                self.input_network['network'].save_model()
+                self.input_network['network'].save_model(sess, saver, file_path)
 
-        if not os.path.exists(save_path):
-            print('*models* directory not found, creating {}'.format(save_path))
-            os.makedirs(save_path)
-        files_path = os.path.join(save_path, "{}".format(self.timestamp))
-        os.makedirs(files_path)
-        self.save_name = '{}\{}'.format(files_path, self.name)
-        print('Saving {} model files in: {}'.format(self.name, files_path))
+        self.save_name = '{}\{}_model'.format(file_path, self.name)
+        print('Saving model as: {}'.format(self.save_name))
 
         saver.save(sess, self.save_name)
 
-        self.save_metadata(files_path)
+        self.save_metadata(file_path)
 
     @classmethod
-    def load_model(cls, load_path):
+    def load_model(self, sess, load_path, model_name):
         """
-        Will load the model parameters from npz file.
+        Restores the model to the tensorflow sessionself
 
         Args:
-            load_path: the exact location where the model has been saved.
+            load_path: the location/directory where the model files are saved
+                        (Eg: 'models/2018_06_13_173841_1_dense/')
+            model_name: the name of the meta/model file to be loaded
+                        (Eg: '1_dense_model')
+                        retrieves: models/2018_06_13_173841_1_dense/1_dense_model.meta
+
         """
+        'models/2018_06_13_173841_1_dense/1_dense_model.meta'
         print('Loading model from: {}'.format(load_path))
-        with open(load_path, 'rb') as f:
-            instance = pickle.load(f)
-        return instance
+        #import the meta file (contains the model)
+        model_instance = tf.train.import_meta_graph('{}{}.meta'.format(load_path, model_name))
+        model_instance.restore(sess, tf.train.latest_checkpoint(load_path))
+        print("Model restored from file: %s" % load_path)
+        return model_instance
 
     def save_record(self, save_path='records'):
         """
@@ -658,7 +670,6 @@ class Network(object):
                 }
             }
         }
-
         if self.input_network:
             config["{}".format(files_path)]["input_network"]['network'] = \
                 self.input_network['network'].save_name

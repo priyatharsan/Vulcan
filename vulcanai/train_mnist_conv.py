@@ -39,7 +39,7 @@ train_images = np.reshape(train_images, (train_images.shape[0], 28, 28))
 test_images = np.reshape(test_images, (test_images.shape[0], 28, 28))
 
 with tf.Graph().as_default() as tf_graph:
-    input_var, y =  utils.initialize_pl(tf.float32, tf.float32,
+    input_var, y = utils.initialize_pl(tf.float32, tf.float32,
                                         [None, 28, 28, 1],
                                         [None, 10])
 
@@ -63,7 +63,7 @@ with tf.Graph().as_default() as tf_graph:
     with tf.variable_scope("conv_net"):
         conv_net = Network(
             name='conv_test',
-            dimensions=[None, 1] + list(train_images.shape[1:]),
+            dimensions=input_var.shape,
             input_var=input_var,
             y=y,
             config=network_conv_config,
@@ -86,23 +86,35 @@ with tf.Graph().as_default() as tf_graph:
 
     train_images = np.expand_dims(train_images, axis=3)
     test_images = np.expand_dims(test_images, axis=3)
-    gpu_options = tf.GPUOptions(allow_growth=True)
+
+gpu_options = tf.GPUOptions(allow_growth=True)
+log_path = 'tf_logs'
+train_x, train_y = train_images[:5000], train_labels[:5000]
+val_x, val_y = train_images[5000:6000], train_labels[5000:6000]
+print("Size of:")
+print("\t Training-set:\t\t{} {}".format(len(train_x), len(train_y)))
+print("\t Validation-set:\t{} {}".format(len(val_x), len(val_y)))
 
 with tf.Session(graph=tf_graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
     init = tf.global_variables_initializer()
     saver = tf.train.Saver()
-    summary_writer = tf.summary.FileWriter('./tf_logs', sess.graph)
+
+    summary_writer = tf.summary.FileWriter(log_path, sess.graph)
+
     sess.run(init)
+
     # # Use to load model from disk
     # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
     dense_net.train(sess,
-        epochs=200,
-        train_x=train_images[:5000],
-        train_y=train_labels[:5000],
-        val_x=train_images[50000:55000],
-        val_y=train_labels[50000:55000],
+        epochs=2,
+        train_x=train_x,
+        train_y=train_y,
+        val_x=val_x,
+        val_y=val_y,
         summary_writer =summary_writer,
         saver=saver,
         batch_ratio=0.005,
         plot=False
     )
+
+    dense_net.save_model(sess, saver)

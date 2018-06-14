@@ -23,7 +23,7 @@ def initialize_pl(x_dtype, y_type, x_shape=None, y_shape=None):
 
 def get_timestamp():
     """Return a 14 digit timestamp."""
-    return datetime.now().strftime('%Y_%m_%d_%H%M%S')
+    return datetime.now().strftime('%Y_%m_%d_%H%M%S_')
 
 
 def get_one_hot(in_matrix):
