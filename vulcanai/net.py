@@ -8,6 +8,8 @@ import numpy as np
 
 import tensorflow as tf
 
+import matplotlib.pyplot as plt
+
 from ops import activations, optimizers
 
 from utils import get_timestamp
@@ -16,7 +18,7 @@ import json
 
 import cPickle as pickle
 
-import matplotlib.pyplot as plt
+
 
 
 class Network(object):
@@ -149,7 +151,7 @@ class Network(object):
                             learning_rate=self.learning_rate_placeholder
             )
         else:
-            updates = None
+            optimizer = None
             ValueError("No optimizer found")
         trainable = tf.trainable_variables()
         with tf.name_scope("train_op_{}".format(self.name)):
@@ -459,8 +461,7 @@ class Network(object):
                 }
         return feed_dict
 
-
-    def train(self, sess, epochs, train_x, train_y, val_x, val_y, summary_writer, saver,
+    def train(self, sess, epochs, train_x, train_y, val_x, val_y, log_path,
               batch_ratio=0.1, plot=True, change_rate=None):
         """
         Train the network.
@@ -479,8 +480,13 @@ class Network(object):
         print('\nTraining {} in progress...\n'.format(self.name))
 
         self.sess = sess
-        self.saver = saver
-        self.summary_writer = summary_writer
+        self.sess_graph = self.sess.graph
+
+        self.init = tf.global_variables_initializer()
+        sess.run(self.init)
+
+        self.saver = tf.train.Saver()
+        self.summary_writer = tf.summary.FileWriter(log_path, self.sess_graph)
         self.run_metadata = tf.RunMetadata()
         self.summaries = tf.summary.merge_all()
 
@@ -551,7 +557,7 @@ class Network(object):
 
                 print("\nLoss= " + "{:.6f}".format(epoch_loss) + ", Accuracy= " + \
                       "{:.5f}".format(epoch_acc))
-                summary_writer.add_summary(summary, epoch)
+                self.summary_writer.add_summary(summary, epoch)
                 train_accuracy, train_error = sess.run(
                                                 [self.accuracy, self.cost],
                                                 feed_dict=self.fill_feed_dict(
@@ -580,6 +586,7 @@ class Network(object):
                         float(validation_error),
                         float(validation_accuracy),
                         valid_epoch))
+                print('Done training!')
 
         except KeyboardInterrupt:
             print("\n\n**********Training stopped prematurely.**********\n\n")
@@ -609,6 +616,16 @@ class Network(object):
 
         self.save_metadata(file_path)
 
+    def save_model2(self, sess, input, output, save_path='models2'):
+        if not os.path.exists(save_path):
+            print('Path not found, creating {}'.format(save_path))
+        tf.saved_model.simple_save(
+                sess, save_path, input, output
+            )
+
+
+
+
     @classmethod
     def load_model(self, sess, load_path, model_name):
         """
@@ -624,7 +641,7 @@ class Network(object):
         """
         'models/2018_06_13_173841_1_dense/1_dense_model.meta'
         print('Loading model from: {}'.format(load_path))
-        #import the meta file (contains the model)
+        # import the meta file (contains the model)
         model_instance = tf.train.import_meta_graph('{}{}.meta'.format(load_path, model_name))
         model_instance.restore(sess, tf.train.latest_checkpoint(load_path))
         print("Model restored from file: %s" % load_path)

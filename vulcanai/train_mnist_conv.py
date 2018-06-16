@@ -1,5 +1,8 @@
 from sklearn.utils import shuffle
 
+import numpy as np
+import os
+
 from net import Network
 from utils import get_one_hot
 from vulcanai import mnist_loader
@@ -7,8 +10,8 @@ from vulcanai import mnist_loader
 import utils
 
 import tensorflow as tf
+from tensorflow.python.saved_model import tag_constants
 
-import numpy as np
 
 (train_images, train_labels, test_images, test_labels) = mnist_loader.load_fashion_mnist()
 
@@ -42,8 +45,6 @@ with tf.Graph().as_default() as tf_graph:
     input_var, y = utils.initialize_pl(tf.float32, tf.float32,
                                         [None, 28, 28, 1],
                                         [None, 10])
-
-
     network_conv_config = {
         'mode': 'conv',
         'filters': [16, 32],
@@ -95,26 +96,58 @@ print("Size of:")
 print("\t Training-set:\t\t{} {}".format(len(train_x), len(train_y)))
 print("\t Validation-set:\t{} {}".format(len(val_x), len(val_y)))
 
+
+# Instantiating Training.....
 with tf.Session(graph=tf_graph, config=tf.ConfigProto(gpu_options=gpu_options)) as sess:
-    init = tf.global_variables_initializer()
-    saver = tf.train.Saver()
 
-    summary_writer = tf.summary.FileWriter(log_path, sess.graph)
-
-    sess.run(init)
-
-    # # Use to load model from disk
-    # # dense_net = Network.load_model('models/20170704194033_3_dense_test.network')
     dense_net.train(sess,
         epochs=2,
         train_x=train_x,
         train_y=train_y,
         val_x=val_x,
         val_y=val_y,
-        summary_writer =summary_writer,
-        saver=saver,
+        log_path =log_path,
         batch_ratio=0.005,
         plot=False
     )
+    inputs = {
+            input_var.name: input_var,
+            y.name: y,
+        }
+    outputs = {dense_net.network.name: dense_net.network}
+    save_path = os.path.join('models2/', "{}".format(utils.get_timestamp()))
+    dense_net.save_model2(sess, inputs, outputs, save_path)
+    values = []
+    for i in range(2):
+        values.append(sess.run(dense_net.accuracy, {
+            input_var: train_x,
+            y: train_y
+            }))
 
-    dense_net.save_model(sess, saver)
+
+with tf.Session(graph=tf_graph) as sess2:
+    # Restore saved values
+    print('\nRestoring...')
+    tf.saved_model.loader.load(
+        sess2,
+        [tag_constants.SERVING],
+        save_path
+    )
+    print('Ok')
+    # Get restored placeholders
+    input_var2 = tf_graph.get_tensor_by_name(input_var.name)
+    y2 = tf_graph.get_tensor_by_name(y.name)
+    # Get restored model output
+    network2 = tf_graph.get_tensor_by_name(dense_net.accuracy.name)
+    restored_values=[]
+    for i in range(2):
+        restored_values.append(sess2.run(network2, {
+            input_var2: train_x,
+            y2: train_y
+            }))
+    print('Values: {}'.format(values))
+    print('Restored values: {}'.format(restored_values))
+
+# Check if original inference and restored inference are equal
+valid = all((v == rv).all() for v, rv in zip(values, restored_values))
+print('\nInferences match: {}'.format(valid))

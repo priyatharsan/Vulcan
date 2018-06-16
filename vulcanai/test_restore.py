@@ -35,6 +35,9 @@ with tf.Session(graph=tf_graph) as sess:
                     feed_dict={
                                 'input_placeholder_1:0': test_x})
 
+    loss_var = sess.run(tf.get_collection(tf.GraphKeys.VARIABLES, scope='loss'))
+    print loss_var
+
 correct_pred = accuracy_score([[np.argmax(i)] for i in test_y],
                                     [[np.argmax(pred_y)] for pred_y in pred])
 print("Accuracy = {}%".format(correct_pred*100))
