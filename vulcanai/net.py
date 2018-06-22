@@ -1,3 +1,4 @@
+# Python 3 version - PyTorch Implementation
 """Contains the class for creating networks."""
 
 import time
@@ -6,19 +7,16 @@ import os
 
 import sys
 import json
-import cPickle as pickle
+#import cPickle as pickle
 import numpy as np
 
-import lasagne
+import torch
 
-import theano
-import theano.tensor as T
-
-from utils import get_class
-from utils import display_record
+#from utils import get_class
+#from utils import display_record
 from utils import get_timestamp
 
-from selu import AlphaDropoutLayer
+#from selu import AlphaDropoutLayer
 
 from ops import activations, optimizers
 
@@ -34,6 +32,13 @@ else:
 
 
 sys.setrecursionlimit(5000)
+
+
+class Flatten(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+    def forward(self, x):
+        return x.view(x.size(0), -1)
 
 
 class Network(object):
@@ -94,17 +99,21 @@ class Network(object):
                self.input_network.get('layer', False) is not False and \
                self.input_network.get('get_params', None) is not None:
 
-                self.input_var = lasagne.layers.get_all_layers(
-                    self.input_network['network']
-                )[0].input_var
+                #self.input_var = lasagne.layers.get_all_layers(
+                #    self.input_network['network']
+                #)[0].input_var
 
-                self.input_dimensions = lasagne.layers.get_output_shape(
-                    self.input_network['network'].layers[
-                        self.input_network['layer']
-                    ]
-                )
-                if self.input_network.get('get_params', False):
-                    self.input_params = self.input_network['network'].params
+                for l_name, l in self.input_network['network'].network.named_children():
+                    if isinstance(l, torch.nn.Sequential):
+                        for subl_name, subl in l.named_children():
+                            for param in subl.parameters():
+                                self.input_dimensions= param.size(0)
+                    else:
+                        for param in l.parameters():
+                            self.input_dimensions= param.size(0)
+
+                #if self.input_network.get('get_params', False):
+                #    self.input_params = self.input_network['network'].params
 
             else:
                 raise ValueError(
@@ -115,18 +124,16 @@ class Network(object):
                     )
                 )
         self.num_classes = num_classes
-        self.network = self.create_network(
+        self.network = torch.nn.Sequential()
+        self.create_network(
             config=self.config,
             nonlinearity=activations[self.activation]
         )
-        if self.y is not None:
-            self.trainer = self.create_trainer()
-            self.validator = self.create_validator()
+        #if self.y is not None:
+        #    self.trainer = self.create_trainer()
+        #    self.validator = self.create_validator()
 
-        self.output = theano.function(
-            [i for i in [self.input_var] if i],
-            lasagne.layers.get_output(self.network, deterministic=True))
-        self.record = None
+
 
         try:
             self.timestamp
@@ -147,11 +154,12 @@ class Network(object):
         """
         import jsonschema
         import schemas
+
         mode = config.get('mode')
         if mode == 'dense':
             jsonschema.validate(config, schemas.dense_network)
 
-            network = self.create_dense_network(
+            self.create_dense_network(
                 units=config.get('units'),
                 dropouts=config.get('dropouts'),
                 nonlinearity=nonlinearity
@@ -159,7 +167,7 @@ class Network(object):
         elif mode == 'conv':
             jsonschema.validate(config, schemas.conv_network)
 
-            network = self.create_conv_network(
+            self.create_conv_network(
                 filters=config.get('filters'),
                 filter_size=config.get('filter_size'),
                 stride=config.get('stride'),
@@ -171,13 +179,11 @@ class Network(object):
             raise ValueError('Mode {} not supported.'.format(mode))
 
         if self.num_classes is not None and self.num_classes != 0:
-            network = self.create_classification_layer(
-                network,
+            self.create_classification_layer(
                 num_classes=self.num_classes,
                 nonlinearity=activations[self.pred_activation]
             )
 
-        return network
 
 
     def create_conv_network(self, filters, filter_size, stride,
@@ -213,15 +219,19 @@ class Network(object):
         print("Creating {} Network...".format(self.name))
         if self.input_network is None:
             print('\tInput Layer:')
-            network = lasagne.layers.InputLayer(shape=self.input_dimensions,
-                                                input_var=self.input_var,
-                                                name="{}_input".format(
-                                                    self.name))
-            print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
-            self.layers.append(network)
+            #print (self.input_dimensions[1], filters[0])
+            layer = torch.nn.Linear(self.input_dimensions[-1],
+                                            self.input_dimensions[-1],
+                                            bias=True)
+            layer_name = "{}_input".format(self.name)
+            self.network.add_module(layer_name, layer)
+            print('\t\t{}'.format(layer))
+            self.layers.append(layer)
         else:
-            network = self.input_network['network']. \
-                layers[self.input_network['layer']]
+            for l_name, l in self.input_network['network'].network.named_children():
+                self.network.add_module(l_name, l)
+            layer = l
+            layer_name = l_name
 
             print('Appending layer {} from {} to {}'.format(
                 self.input_network['layer'],
@@ -229,56 +239,44 @@ class Network(object):
                 self.name))
 
         if conv_dim == 1:
-            conv_layer = lasagne.layers.Conv1DLayer
-            pool = lasagne.layers.Pool1DLayer
+            conv_l = torch.nn.Conv1d
+            pool_l = torch.nn.MaxPool1d
+            batch_norm = torch.nn.BatchNorm1d
         elif conv_dim == 2:
-            conv_layer = lasagne.layers.Conv2DLayer
-            pool = lasagne.layers.Pool2DLayer
+            conv_l = torch.nn.Conv2d
+            pool_l = torch.nn.MaxPool2d
+            batch_norm = torch.nn.BatchNorm2d
         elif conv_dim == 3:
-            conv_layer = lasagne.layers.Conv3DLayer
-            pool = lasagne.layers.Pool3DLayer
+            conv_l = torch.nn.Conv3d
+            pool_l = torch.nn.MaxPool3d
+            batch_norm = torch.nn.BatchNorm3d
         else:
             pool = None   # Linter is stupid
-            conv_layer = None
+            conv_l = None
             ValueError("Convolution is only supported for one of the first three dimensions")
 
-        print('\tHidden Layer:')
+        print('\tHidden Layers:')
         for i, (f, f_size, s, p_s) in enumerate(zip(filters,
                                                     filter_size,
                                                     stride,
                                                     pool_stride)):
-            network = conv_layer(
-                incoming=network,
-                num_filters=f,
-                filter_size=f_size,
-                stride=s,
-                pad='same',
-                nonlinearity=nonlinearity,
-                name="{}_conv{}D_{}".format(
-                    self.name, conv_dim, i)
-            )
-            network.add_param(
-                network.W,
-                network.W.get_value().shape,
-                **{self.name: True}
-            )
-            network.add_param(
-                network.b,
-                network.b.get_value().shape,
-                **{self.name: True}
-            )
-            self.layers.append(network)
-            print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
-            network = pool(
-                incoming=network,
-                pool_size=p_s,
-                mode=pool_mode,
-                name="{}_{}pool".format(
-                    self.name, pool_mode)
-            )
-            self.layers.append(network)
-            print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
-        return network
+            for param in self.network.parameters():  #We need this because we can't do shape inference in pytorch, and we need to know what size filters to construct
+                input_dim=int(param.size()[-1])
+            layer_name = "{}_conv{}D_{}".format(
+                                    self.name, conv_dim, i)
+
+            layer = torch.nn.Sequential(conv_l(
+                            in_channels=input_dim,
+                            out_channels=f,
+                            kernel_size=f_size,
+                            stride=s),
+                            batch_norm(f),
+                            nonlinearity(),
+                            pool_l(p_s,
+                                stride=p_s))
+            self.network.add_module(layer_name, layer)
+            self.layers.append(layer)
+            print('\t\t{}'.format(layer))
 
 
     def create_dense_network(self, units, dropouts, nonlinearity):
@@ -300,72 +298,60 @@ class Network(object):
         print("Creating {} Network...".format(self.name))
         if self.input_network is None:
             print('\tInput Layer:')
-            network = lasagne.layers.InputLayer(shape=self.input_dimensions,
-                                                input_var=self.input_var,
-                                                name="{}_input".format(
-                                                    self.name))
-            print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
+            input_layer = torch.nn.Linear(self.input_dimensions[-1],
+                                            self.input_dimensions[-1],
+                                            bias=True)
+            input_layer_name = "{}_input".format(self.name)
+            self.network.add_module(input_layer_name, input_layer)
+            print('\t\t{}'.format(input_layer))
             self.layers.append(network)
         else:
-            network = self.input_network['network']. \
-                layers[self.input_network['layer']]
+            for l_name, l in self.input_network['network'].network.named_children():
+                self.network.add_module(l_name, l)
+            layer = l
+            layer_name = l_name
 
             print('Appending layer {} from {} to {}'.format(
                 self.input_network['layer'],
                 self.input_network['network'].name,
                 self.name))
 
-        if nonlinearity.__name__ == 'selu':
-            network = lasagne.layers.BatchNormLayer(
-                incoming=network,
-                name="{}_batchnorm".format(self.name)
-            )
+            #To stitch ConvLayer ---> DenseLayer
+            if layer.__class__.__name__.find('Conv'): #Src: https://discuss.pytorch.org/t/flatten-layer-of-pytorch-build-by-sequential-container/5983/3
+                layer_name = "flatten"
+                self.network.add_module("flatten", Flatten())
+                layer = self.network[-1]
+                self.layers.append(layer)
+                print('\t\t{}'.format(layer))
+
+        #if nonlinearity.__name__ == 'selu':
+        #    network = torch.nn.BatchNorm2d(network)
 
         print('\tHidden Layer:')
         for i, (num_units, prob_dropout) in enumerate(zip(units, dropouts)):
-            if nonlinearity.__name__ == 'selu':
-                w = lasagne.init.Normal(std=np.sqrt(1.0 / num_units))
-                b = lasagne.init.Normal(std=0.0)
-            else:
-                w = lasagne.init.GlorotUniform()
-                b = lasagne.init.Constant(0.)
+            for param in self.network.parameters():  #We need this because we can't do shape inference in pytorch, and we need to know what size filters to construct
+                input_dim=int(param.size()[-1])
+            layer_name ="{}_dense_{}".format(self.name, i)
+            layer = torch.nn.Sequential(torch.nn.Linear(
+                            in_features=input_dim,
+                            out_features=num_units,
+                            bias=True),
+                            torch.nn.Dropout(prob_dropout)
+                            )
+            self.network.add_module(layer_name, layer)
+            self.layers.append(layer)
+            print('\t\t{}'.format(layer))
+        for param in layer.parameters():  #We need this because we can't do shape inference in pytorch, and we need to know what size filters to construct
+            self.input_dimensions=int(param.size()[-1])
 
-            network = lasagne.layers.DenseLayer(
-                incoming=network,
-                num_units=num_units,
-                nonlinearity=nonlinearity,
-                name="{}_dense_{}".format(self.name, i),
-                W=w,
-                b=b
-            )
-            network.add_param(
-                network.W,
-                network.W.get_value().shape,
-                **{self.name: True}
-            )
-            network.add_param(
-                network.b,
-                network.b.get_value().shape,
-                **{self.name: True}
-            )
-            self.layers.append(network)
+    def weights_init(m): # Src: https://github.com/pytorch/examples/blob/master/dcgan/main.py#L90-L96
+        """Need work done"""
+        classname = m.__class__.__name__
+        if classname.find('Linear') != -1:
+            m.weight.data.normal_(0.0, 0.02)
+            m.bias.data.fill_(0)
 
-            if nonlinearity.__name__ == 'selu':
-                network = AlphaDropoutLayer(
-                    incoming=network,
-                    name="{}_alphadropout_{}".format(self.name, i))
-            else:
-                network = lasagne.layers.DropoutLayer(
-                    incoming=network,
-                    p=prob_dropout,
-                    name="{}_dropout_{}".format(self.name, i)
-                )
-
-            self.layers.append(network)
-            print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
-        return network
-
-    def create_classification_layer(self, network, num_classes,
+    def create_classification_layer(self, num_classes,
                                     nonlinearity):
         """
         Create a classification layer. Normally used as the last layer.
@@ -378,25 +364,16 @@ class Network(object):
         Returns: the classification layer appended to all previous layers
         """
         print('\tOutput Layer:')
-        network = lasagne.layers.DenseLayer(
-            incoming=network,
-            num_units=num_classes,
-            nonlinearity=nonlinearity,
-            name="{}_softmax".format(self.name)
-        )
-        network.add_param(
-            network.W,
-            network.W.get_value().shape,
-            **{self.name: True}
-        )
-        network.add_param(
-            network.b,
-            network.b.get_value().shape,
-            **{self.name: True}
-        )
-        print('\t\t{}'.format(lasagne.layers.get_output_shape(network)))
-        self.layers.append(network)
-        return network
+        layer_name ="classification_layer"
+        layer = torch.nn.Sequential(torch.nn.Linear(
+                        in_features=self.input_dimensions,
+                        out_features=num_classes,
+                        bias=True),
+                        nonlinearity()
+                        )
+        self.network.add_module(layer_name, layer)
+        self.layers.append(layer)
+        print('\t\t{}'.format(layer))
 
     def cross_entropy_loss(self, prediction, y):
         """Generate a cross entropy loss function."""
@@ -514,7 +491,6 @@ class Network(object):
             return get_class(self.output(input_data))
         else:
             return self.output(input_data)
-
 
     def train(self, epochs, train_x, train_y, val_x, val_y,
               batch_ratio=0.1, plot=True, change_rate=None):

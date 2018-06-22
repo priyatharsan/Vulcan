@@ -1,17 +1,17 @@
+# Python 3 version - PyTorch Implementation
 """Contains activation functions and gradient descent optimizers."""
 
-from lasagne.nonlinearities import sigmoid, softmax, rectify
-from lasagne.updates import sgd, adam
-from selu import selu
+import torch
+
 
 activations = {
-    "sigmoid": sigmoid,
-    "softmax": softmax,
-    "rectify": rectify,
-    "selu": selu
+    "sigmoid": torch.nn.Sigmoid,
+    "softmax": torch.nn.Softmax,
+    "rectify": torch.nn.ReLU,
+    "selu": torch.nn.SELU
 }
 
 optimizers = {
-    "sgd": sgd,
-    "adam": adam
+    "sgd": torch.optim.SGD,
+    "adam": torch.optim.Adam
 }

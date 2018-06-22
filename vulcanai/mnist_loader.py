@@ -1,7 +1,14 @@
+# Python 3 version - PyTorch Implementation
+
 import os
-import urllib
+import sys
 import gzip
 import numpy as np
+if sys.version_info.major < 3:
+    import urllib
+else:
+    import urllib.request as request
+
 
 
 def load_fashion_mnist():
@@ -89,9 +96,12 @@ def load_mnist():
 def _download_file(file_path, folder='data'):
     print("Downloading {}...".format(file_path))
 
-    test_file = urllib.URLopener()
+
     file_name = file_path.split('/')[-1]
-    test_file.retrieve(file_path, '{}/{}'.format(folder, file_name))
+    if sys.version_info.major < 3:
+        urllib.URLopener().retrieve(file_path, '{}/{}'.format(folder, file_name))
+    else:
+        request.urlretrieve(file_path, '{}/{}'.format(folder, file_name))
 
 
 def _load_image(filename):
