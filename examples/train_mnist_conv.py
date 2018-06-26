@@ -1,8 +1,12 @@
 import numpy as np
 
-from sklearn.utils import shuffle
-
-import theano.tensor as T
+import torch
+import torchvision
+import torch.nn as nn
+from torch.autograd import Variable
+import numpy as np
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
 
 from vulcanai.net import Network
 from vulcanai.utils import get_one_hot
